@@ -37,11 +37,24 @@ var detect_scheme_change_block = false; // This is just a sneaky way to prevent 
 let DEBUG_MODE = false;
 browser.storage.local.get(DEBUG_MODE_KEY)
     .then((obj) => {
-        DEBUG_MODE = obj[DEBUG_MODE_KEY].check;
+        // On a fresh install this read runs before init() has created
+        // the key, so guard against it being absent.
+        DEBUG_MODE = !!(obj[DEBUG_MODE_KEY] && obj[DEBUG_MODE_KEY].check);
 
         if (DEBUG_MODE)
             console.log("automaticDark DEBUG: DEBUG_MODE is enabled.");
     }, onError);
+
+// Pick up the Debug mode checkbox immediately. The read above only runs
+// once at page load, so the background page never saw later changes —
+// toggling the checkbox did nothing for its logging until the extension
+// reloaded or the browser restarted.
+browser.storage.onChanged.addListener((changes, area) => {
+    if (area === "local" && changes[DEBUG_MODE_KEY]) {
+        DEBUG_MODE = !!(changes[DEBUG_MODE_KEY].newValue && changes[DEBUG_MODE_KEY].newValue.check);
+        console.log("automaticDark DEBUG: DEBUG_MODE is now " + DEBUG_MODE + ".");
+    }
+});
 
 // Things to do when the extension is starting up
 // (or if the settings have been reset).

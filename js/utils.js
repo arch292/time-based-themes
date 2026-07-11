@@ -73,7 +73,8 @@ function setStorage(obj, overrideDefault = false) {
             if (overrideDefault || isEmpty(items)) {
                 return browser.storage.local.set(obj)
                     .then((obj) => {
-                        console.log(obj);
+                        if (DEBUG_MODE)
+                            console.log(obj);
                     }, onError);
             }
         }, onError);
