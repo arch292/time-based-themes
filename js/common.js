@@ -288,6 +288,19 @@ function alarmListener(alarmInfo) {
 // Otherwise, set nighttime theme.
 
 // TODO: Can split this function to be more generic. Make function enableTime happen as a parameter.
+// Record the current mode (day-mode/night-mode), writing storage only
+// when the value actually changes. The once-a-minute poll and the
+// window-focus listener land here constantly; without the guard they
+// generate a steady stream of no-op writes and onChanged events.
+function setCurrentMode(mode) {
+    return browser.storage.local.get(CURRENT_MODE_KEY)
+        .then((obj) => {
+            if (!obj[CURRENT_MODE_KEY] || obj[CURRENT_MODE_KEY].mode !== mode) {
+                return browser.storage.local.set({[CURRENT_MODE_KEY]: {mode: mode}});
+            }
+        });
+}
+
 function checkTime() {
     let date = new Date(Date.now());
     let hours = date.getHours();
@@ -311,7 +324,7 @@ function checkTime() {
                     .then((obj) => {
                         return enableTheme(obj, DAYTIME_THEME_KEY)
                             .then(() => {
-                                return browser.storage.local.set({[CURRENT_MODE_KEY]: {mode: "day-mode"}});
+                                return setCurrentMode("day-mode");
                             });
                     }, onError);
             } else {
@@ -319,7 +332,7 @@ function checkTime() {
                     .then((obj) => {
                         return enableTheme(obj, NIGHTTIME_THEME_KEY)
                             .then(() => {
-                                return browser.storage.local.set({[CURRENT_MODE_KEY]: {mode: "night-mode"}});
+                                return setCurrentMode("night-mode");
                             });
                     }, onError);
             }
@@ -337,7 +350,7 @@ function checkSysTheme() {
         return browser.storage.local.get(NIGHTTIME_THEME_KEY)
             .then((obj) => {
                 return Promise.all([
-                    browser.storage.local.set({[CURRENT_MODE_KEY]: {mode: "night-mode"}}), 
+                    setCurrentMode("night-mode"),
                     enableTheme(obj, NIGHTTIME_THEME_KEY)
                 ]);
             }, onError);
@@ -347,7 +360,7 @@ function checkSysTheme() {
         return browser.storage.local.get(DAYTIME_THEME_KEY)
             .then((obj) => {
                 return Promise.all([
-                    browser.storage.local.set({[CURRENT_MODE_KEY]: {mode: "day-mode"}}),
+                    setCurrentMode("day-mode"),
                     enableTheme(obj, DAYTIME_THEME_KEY)
                 ]);
             }, onError);
