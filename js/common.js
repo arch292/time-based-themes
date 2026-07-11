@@ -14,6 +14,7 @@ const SUNRISE_TIME_KEY = KEY_PREFIX + "sunriseTime";
 const SUNSET_TIME_KEY = KEY_PREFIX + "sunsetTime";
 const NEXT_SUNRISE_ALARM_NAME = KEY_PREFIX + "nextSunrise";
 const NEXT_SUNSET_ALARM_NAME = KEY_PREFIX + "nextSunset";
+const SYSTEM_THEME_POLL_ALARM_NAME = KEY_PREFIX + "systemThemePoll";
 
 const GEOLOCATION_LATITUDE_KEY = KEY_PREFIX + "geoLatitude";
 const GEOLOCATION_LONGITUDE_KEY = KEY_PREFIX + "geoLongitude";
@@ -81,6 +82,15 @@ function init() {
                 // On start up, change the themes appropriately.
                 changeThemeBasedOnChangeMode(obj[CHANGE_MODE_KEY].mode);
 
+                // Poll the system theme on a timer as a fallback. Since Firefox 95,
+                // prefers-color-scheme in extension pages reflects the browser theme
+                // rather than the OS (Bugzilla 1741009, resolved WORKSFORME), so the
+                // matchMedia 'change' event below only fires on OS theme changes while
+                // the color_scheme "system" workaround is applied — and a change can
+                // still be missed (e.g. while the machine sleeps).
+                // See issues #43, #64, #67.
+                browser.alarms.create(SYSTEM_THEME_POLL_ALARM_NAME, {periodInMinutes: 1});
+
                 // Add a listener to change the theme when the window is focused.
 
                 // For changing based on system theme, this is an additional check as
@@ -103,6 +113,9 @@ function init() {
                                     createAlarm(SUNRISE_TIME_KEY, NEXT_SUNRISE_ALARM_NAME, 60 * 24),
                                     createAlarm(SUNSET_TIME_KEY, NEXT_SUNSET_ALARM_NAME, 60 * 24)
                                 }
+
+                                // clearAll() above can wipe the poll alarm; re-establish it.
+                                browser.alarms.create(SYSTEM_THEME_POLL_ALARM_NAME, {periodInMinutes: 1});
                             });
                     }
                 });
@@ -241,6 +254,16 @@ function alarmListener(alarmInfo) {
             // checkTime() reads the (possibly just-updated) sunrise/sunset times,
             // enables the correct day/night theme, and records the current mode.
             .then(() => checkTime());
+    }
+    else if (alarmInfo.name === SYSTEM_THEME_POLL_ALARM_NAME) {
+        // System-theme mode: re-check the OS theme on a timer, as a fallback
+        // for when the prefers-color-scheme 'change' event isn't delivered.
+        return browser.storage.local.get(CHANGE_MODE_KEY)
+            .then((obj) => {
+                if (obj[CHANGE_MODE_KEY].mode === "system-theme") {
+                    return checkSysTheme();
+                }
+            }, onError);
     }
     else if (alarmInfo.name === "checkTime") {
         return checkTime();
