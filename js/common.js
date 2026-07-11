@@ -217,56 +217,30 @@ function alarmListener(alarmInfo) {
     if (DEBUG_MODE)
         console.log("automaticDark DEBUG: Start alarmListener");
 
-    if (alarmInfo.name === NEXT_SUNRISE_ALARM_NAME) {
-        return browser.storage.local.get([CHANGE_MODE, DAYTIME_THEME_KEY])
-            .then(
-                (values) => {
-                    // If we are set to get suntimes automatically,
-                    // then calculate the sunset again upon
-                    // an alarm and create new alarms based on that.
-                    if (obj[CHANGE_MODE_KEY] = "location-suntimes") {
-                        calculateSuntimes()
-                            .then((result) => {
-                                return Promise.all([
-                                    browser.storage.local.set({[SUNRISE_TIME_KEY]: {time: convertDateToString(result.nextSunrise)}}),
-                                    browser.storage.local.set({[SUNSET_TIME_KEY]: {time: convertDateToString(result.nextSunset)}})
-                                ]);
-                            })
-                            .then(() => {
-                                return Promise.all([
-                                    createAlarm(SUNRISE_TIME_KEY, NEXT_SUNRISE_ALARM_NAME, 60 * 24),
-                                    createAlarm(SUNSET_TIME_KEY, NEXT_SUNSET_ALARM_NAME, 60 * 24)
-                                ]);
-                            });
-
-                        
-                    }
-                    enableTheme(values, DAYTIME_THEME_KEY);
+    if (alarmInfo.name === NEXT_SUNRISE_ALARM_NAME || alarmInfo.name === NEXT_SUNSET_ALARM_NAME) {
+        return browser.storage.local.get(CHANGE_MODE_KEY)
+            .then((obj) => {
+                // In automatic (location) mode, recalculate the next sunrise/sunset
+                // times upon each alarm and reschedule the alarms based on them.
+                if (obj[CHANGE_MODE_KEY].mode === "location-suntimes") {
+                    return calculateSuntimes()
+                        .then((result) => {
+                            return Promise.all([
+                                browser.storage.local.set({[SUNRISE_TIME_KEY]: {time: convertDateToString(result.nextSunrise)}}),
+                                browser.storage.local.set({[SUNSET_TIME_KEY]: {time: convertDateToString(result.nextSunset)}})
+                            ]);
+                        })
+                        .then(() => {
+                            return Promise.all([
+                                createAlarm(SUNRISE_TIME_KEY, NEXT_SUNRISE_ALARM_NAME, 60 * 24),
+                                createAlarm(SUNSET_TIME_KEY, NEXT_SUNSET_ALARM_NAME, 60 * 24)
+                            ]);
+                        });
                 }
-                , onError);
-    }
-    else if (alarmInfo.name === NEXT_SUNSET_ALARM_NAME) {
-        return browser.storage.local.get([AUTOMATIC_SUNTIMES_KEY, NIGHTTIME_THEME_KEY])
-            .then(
-                (values) => {
-                    if (obj[CHANGE_MODE_KEY] = "location-suntimes") {
-                        calculateSuntimes()
-                            .then((result) => {
-                                return Promise.all([
-                                    browser.storage.local.set({[SUNRISE_TIME_KEY]: {time: convertDateToString(result.nextSunrise)}}),
-                                    browser.storage.local.set({[SUNSET_TIME_KEY]: {time: convertDateToString(result.nextSunset)}})
-                                ]);
-                            })
-                            .then(() => {
-                                return Promise.all([
-                                    createAlarm(SUNRISE_TIME_KEY, NEXT_SUNRISE_ALARM_NAME, 60 * 24),
-                                    createAlarm(SUNSET_TIME_KEY, NEXT_SUNSET_ALARM_NAME, 60 * 24)
-                                ]);
-                            });
-                    }
-                    enableTheme(values, NIGHTTIME_THEME_KEY);
-                }
-                , onError);
+            }, onError)
+            // checkTime() reads the (possibly just-updated) sunrise/sunset times,
+            // enables the correct day/night theme, and records the current mode.
+            .then(() => checkTime());
     }
     else if (alarmInfo.name === "checkTime") {
         return checkTime();
