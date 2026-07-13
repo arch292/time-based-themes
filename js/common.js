@@ -380,7 +380,8 @@ function enableTheme(theme, themeKey) {
                 if (DEBUG_MODE)
                     console.log("automaticDark DEBUG: 100 enableTheme - Enabled theme " + theme.themeId);
                 detect_scheme_change_block = true; // Temporarily disables detection of color scheme change
-                browser.management.setEnabled(theme.themeId, true).then(enableSchemeChangeDetection);
+                browser.management.setEnabled(theme.themeId, true).then(enableSchemeChangeDetection,
+                    (err) => { detect_scheme_change_block = false; onError(err); });
             }
             else {
                 if (DEBUG_MODE)
@@ -399,43 +400,54 @@ function enableSchemeChangeDetection() {
         .then((obj) => {
             let mode = obj[CHANGE_MODE_KEY].mode;
 
-            browser.theme.getCurrent().then(current_theme => {
+            // Only modify the current theme when the extension is set to "system theme" mode.
+            if (mode === "system-theme") {
+                // Drop any dynamic theme we previously applied via theme.update()
+                // BEFORE reading getCurrent(). theme.update() creates an overlay
+                // owned by this extension that sits on top of the enabled static
+                // theme; while that overlay exists, getCurrent() returns it, not
+                // the static theme underneath.
+                // Without the reset, a stale overlay (e.g. last night's dark
+                // colors) gets re-applied over the newly enabled theme and masks
+                // it indefinitely, even though management reports the right theme.
+                browser.theme.reset()
+                    .then(() => browser.theme.getCurrent())
+                    .then((current_theme) => {
+                        if (DEBUG_MODE)
+                            console.log(current_theme);
 
+                        if (current_theme.colors) { // "System theme — auto" is an empty object
+                            if (DEBUG_MODE)
+                                console.log("automaticDark DEBUG: enableSchemeChangeDetection - Mode is set to 'system-theme'. Set color_scheme to system.");
+
+                            // Some themes are returned without a 'properties' object.
+                            // Guard against that so we don't throw and leave the
+                            // scheme-change block stuck on (silently disabling detection).
+                            if (!current_theme.properties)
+                                current_theme.properties = {};
+                            current_theme.properties.color_scheme = "system"; // Change the property of the theme object
+                            current_theme.properties.content_color_scheme = "system"; // Optional
+
+                            return browser.theme.update(current_theme).then(() => {
+                                if (DEBUG_MODE)
+                                    console.log("automaticDark DEBUG: enableSchemeChangeDetection - Updated current theme.");
+                            });
+                        }
+                    })
+                    // Un-block scheme change detection whether or not the update applied.
+                    .then(() => { detect_scheme_change_block = false; },
+                          (err) => { detect_scheme_change_block = false; onError(err); });
+            }
+            else { //if (mode === "location-suntimes" || mode === "manual-suntimes"){
                 if (DEBUG_MODE)
-                    console.log(current_theme);
+                    console.log("automaticDark DEBUG: enableSchemeChangeDetection - Mode is set to: " + mode + ". Reset theme to default.");
 
-                if (current_theme.colors) { // "System theme — auto" is an empty object
-
-                    // Only modify the current theme when the extension is set to "system theme" mode.
-                    if (mode === "system-theme") {
-                        if (DEBUG_MODE)
-                            console.log("automaticDark DEBUG: enableSchemeChangeDetection - Mode is set to 'system-theme'. Set color_scheme to system.");
-
-                        current_theme.properties.color_scheme = "system"; // Change the property of the theme object
-                        current_theme.properties.content_color_scheme = "system"; // Optional
-
-                        browser.theme.update(current_theme).then(() => {
-                            if (DEBUG_MODE)
-                                console.log("automaticDark DEBUG: enableSchemeChangeDetection - Updated current theme.");
-                            detect_scheme_change_block = false;
-                        }); // Applies amended theme and un-block scheme change detection
-
-                    }
-                    else { //if (mode === "location-suntimes" || mode === "manual-suntimes"){
-                        if (DEBUG_MODE)
-                            console.log("automaticDark DEBUG: enableSchemeChangeDetection - Mode is set to: " + mode + ". Reset theme to default.");
-
-                        browser.theme.reset().then(() => {
-                            if (DEBUG_MODE)
-                                console.log("automaticDark DEBUG: enableSchemeChangeDetection - Reset current theme.");
-                            detect_scheme_change_block = false;
-                        });
-                    }
-
-                } else {
+                browser.theme.reset().then(() => {
+                    if (DEBUG_MODE)
+                        console.log("automaticDark DEBUG: enableSchemeChangeDetection - Reset current theme.");
                     detect_scheme_change_block = false;
-                }
-            });
+                });
+            }
         });
 }
 
