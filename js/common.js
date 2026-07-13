@@ -386,8 +386,29 @@ function enableTheme(theme, themeKey) {
             else {
                 if (DEBUG_MODE)
                     console.log("automaticDark DEBUG: 100 enableTheme - " + theme.themeId + " is already enabled.");
+                return reapplyColorSchemeFix();
             }
         }, onError);
+}
+
+// Re-apply the color_scheme fix if the enabled theme is missing it.
+// Switching to system-theme mode while the matching theme is already
+// enabled skips enableSchemeChangeDetection(), leaving the theme without
+// color_scheme "system" — OS scheme changes then go undetected for the
+// rest of the session.
+function reapplyColorSchemeFix() {
+    return browser.storage.local.get(CHANGE_MODE_KEY)
+        .then((obj) => {
+            if (obj[CHANGE_MODE_KEY].mode !== "system-theme") {
+                return;
+            }
+            return browser.theme.getCurrent().then((current_theme) => {
+                if (current_theme.colors
+                        && (!current_theme.properties || current_theme.properties.color_scheme !== "system")) {
+                    enableSchemeChangeDetection();
+                }
+            });
+        });
 }
 
 // Modifies the color scheme of the current theme to prevent interference with detection of the OS system theme.
