@@ -249,7 +249,7 @@ automaticSuntimesRadio.addEventListener("input", function(event) {
                     onError(error);
                     locationWarning.style.display = "inline";
                     getChangeMode(); // In error, change radio buttons (and settings) back to the way they were, based on storage.
-                    changeThemeBasedOnChangeMode("location-theme");
+                    queueThemeSwitch(() => changeThemeBasedOnChangeMode("location-theme"));
                 });
     }
 });
@@ -259,7 +259,7 @@ manualSuntimesRadio.addEventListener("input", function(event) {
         browser.storage.local.set({[CHANGE_MODE_KEY]: {mode: "manual-suntimes"}});
         sunriseInput.disabled = false;
         sunsetInput.disabled = false;
-        changeThemeBasedOnChangeMode("manual-suntimes").then(changeLogo);
+        queueThemeSwitch(() => changeThemeBasedOnChangeMode("manual-suntimes")).then(changeLogo);
     }
 });
 
@@ -274,7 +274,7 @@ sysThemeRadio.addEventListener("input", function(event) {
         browser.storage.local.set({[CHANGE_MODE_KEY]: {mode: "system-theme"}});
         sunriseInput.disabled = true;
         sunsetInput.disabled = true;
-        changeThemeBasedOnChangeMode("system-theme").then(changeLogo);
+        queueThemeSwitch(() => changeThemeBasedOnChangeMode("system-theme")).then(changeLogo);
     }
 });
 
@@ -314,7 +314,7 @@ debugModeBox.addEventListener("input", function(event) {
 sunriseInput.addEventListener("input", function(event) {
     browser.storage.local.set({[SUNRISE_TIME_KEY]: {time: sunriseInput.value}})
         .then(() => {
-            checkTime().then(changeLogo);
+            queueThemeSwitch(checkTime).then(changeLogo);
             return browser.storage.local.get(CHECK_TIME_STARTUP_ONLY_KEY)
         }, onError)
         .then((obj) => {
@@ -329,7 +329,7 @@ sunriseInput.addEventListener("input", function(event) {
 sunsetInput.addEventListener("input", function(event) {
     browser.storage.local.set({[SUNSET_TIME_KEY]: {time: sunsetInput.value}})
         .then(() => {
-            checkTime().then(changeLogo);
+            queueThemeSwitch(checkTime).then(changeLogo);
             return browser.storage.local.get(CHECK_TIME_STARTUP_ONLY_KEY);
         }, onError)
         .then((obj) => {
@@ -347,7 +347,7 @@ daytimeThemeList.addEventListener('change', function(event) {
             return browser.storage.local.get([CHECK_TIME_STARTUP_ONLY_KEY, CHANGE_MODE_KEY]);
         }, onError)
         .then((obj) => {
-            changeThemeBasedOnChangeMode(obj[CHANGE_MODE_KEY].mode);
+            queueThemeSwitch(() => changeThemeBasedOnChangeMode(obj[CHANGE_MODE_KEY].mode));
         }, onError);
     }
 );
@@ -360,7 +360,7 @@ nighttimeThemeList.addEventListener('change', function(event) {
             return browser.storage.local.get([CHECK_TIME_STARTUP_ONLY_KEY, CHANGE_MODE_KEY]);
         }, onError)
         .then((obj) => {
-            changeThemeBasedOnChangeMode(obj[CHANGE_MODE_KEY].mode);
+            queueThemeSwitch(() => changeThemeBasedOnChangeMode(obj[CHANGE_MODE_KEY].mode));
         }, onError);
     }
 );
