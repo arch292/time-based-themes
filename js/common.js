@@ -34,6 +34,23 @@ let DEFAULT_NIGHTTIME_THEME = "";
 
 var detect_scheme_change_block = false; // This is just a sneaky way to prevent flashing
 
+// All theme switches are funneled through this queue so only one runs at a
+// time. The change event, the focus listener, the poll and the startup check
+// can otherwise fire near-simultaneously and interleave: the second chain's
+// theme.reset() can land after the first chain's finished switch, and
+// theme.reset() always repaints the *default* theme, not the enabled one
+// (see bug 1415267) — leaving the default theme on screen with no
+// color_scheme workaround applied and nothing left to correct it.
+let theme_switch_queue = Promise.resolve();
+
+// Run fn after every previously queued theme switch has fully finished.
+// Returns fn's own promise; the stored queue tail never stays rejected.
+function queueThemeSwitch(fn) {
+    const result = theme_switch_queue.then(fn);
+    theme_switch_queue = result.then(() => {}, onError);
+    return result;
+}
+
 let DEBUG_MODE = false;
 browser.storage.local.get(DEBUG_MODE_KEY)
     .then((obj) => {
@@ -93,7 +110,7 @@ function init() {
         .then((obj) => {
             if (!obj[CHECK_TIME_STARTUP_ONLY_KEY].check) {
                 // On start up, change the themes appropriately.
-                changeThemeBasedOnChangeMode(obj[CHANGE_MODE_KEY].mode);
+                queueThemeSwitch(() => changeThemeBasedOnChangeMode(obj[CHANGE_MODE_KEY].mode));
 
                 // Poll the system theme on a timer as a fallback. Since Firefox 95,
                 // prefers-color-scheme in extension pages reflects the browser theme
@@ -119,7 +136,7 @@ function init() {
 
                         browser.storage.local.get(CHANGE_MODE_KEY)
                             .then((obj) => {
-                                changeThemeBasedOnChangeMode(obj[CHANGE_MODE_KEY].mode);
+                                queueThemeSwitch(() => changeThemeBasedOnChangeMode(obj[CHANGE_MODE_KEY].mode));
 
                                 if (obj[CHANGE_MODE_KEY].mode === "location-suntimes" || obj[CHANGE_MODE_KEY].mode === "manual-suntimes"){
                                     browser.alarms.clearAll();
@@ -143,7 +160,7 @@ function init() {
                         browser.storage.local.get(CHANGE_MODE_KEY)
                             .then((obj) => {
                                 if (obj[CHANGE_MODE_KEY].mode === "system-theme") {
-                                    checkSysTheme();
+                                    queueThemeSwitch(checkSysTheme);
                                 }
                         });
                     } else {
@@ -186,7 +203,7 @@ function init() {
             }
         }, onError)
         .then((obj) => {
-            enableSchemeChangeDetection();
+            return queueThemeSwitch(enableSchemeChangeDetection);
         }, onError);
 }
 
@@ -266,7 +283,7 @@ function alarmListener(alarmInfo) {
             }, onError)
             // checkTime() reads the (possibly just-updated) sunrise/sunset times,
             // enables the correct day/night theme, and records the current mode.
-            .then(() => checkTime());
+            .then(() => queueThemeSwitch(checkTime));
     }
     else if (alarmInfo.name === SYSTEM_THEME_POLL_ALARM_NAME) {
         // System-theme mode: re-check the OS theme on a timer, as a fallback
@@ -274,12 +291,12 @@ function alarmListener(alarmInfo) {
         return browser.storage.local.get(CHANGE_MODE_KEY)
             .then((obj) => {
                 if (obj[CHANGE_MODE_KEY].mode === "system-theme") {
-                    return checkSysTheme();
+                    return queueThemeSwitch(checkSysTheme);
                 }
             }, onError);
     }
     else if (alarmInfo.name === "checkTime") {
-        return checkTime();
+        return queueThemeSwitch(checkTime);
     }
 }
 
@@ -380,7 +397,7 @@ function enableTheme(theme, themeKey) {
                 if (DEBUG_MODE)
                     console.log("automaticDark DEBUG: 100 enableTheme - Enabled theme " + theme.themeId);
                 detect_scheme_change_block = true; // Temporarily disables detection of color scheme change
-                browser.management.setEnabled(theme.themeId, true).then(enableSchemeChangeDetection,
+                return browser.management.setEnabled(theme.themeId, true).then(enableSchemeChangeDetection,
                     (err) => { detect_scheme_change_block = false; onError(err); });
             }
             else {
@@ -405,7 +422,7 @@ function reapplyColorSchemeFix() {
             return browser.theme.getCurrent().then((current_theme) => {
                 if (current_theme.colors
                         && (!current_theme.properties || current_theme.properties.color_scheme !== "system")) {
-                    enableSchemeChangeDetection();
+                    return enableSchemeChangeDetection();
                 }
             });
         });
@@ -417,7 +434,7 @@ function enableSchemeChangeDetection() {
     if (DEBUG_MODE)
         console.log("automaticDark DEBUG: Start enableSchemeChangeDetection");
 
-    browser.storage.local.get(CHANGE_MODE_KEY)
+    return browser.storage.local.get(CHANGE_MODE_KEY)
         .then((obj) => {
             let mode = obj[CHANGE_MODE_KEY].mode;
 
@@ -431,7 +448,7 @@ function enableSchemeChangeDetection() {
                 // Without the reset, a stale overlay (e.g. last night's dark
                 // colors) gets re-applied over the newly enabled theme and masks
                 // it indefinitely, even though management reports the right theme.
-                browser.theme.reset()
+                return browser.theme.reset()
                     .then(() => browser.theme.getCurrent())
                     .then((current_theme) => {
                         if (DEBUG_MODE)
@@ -463,7 +480,7 @@ function enableSchemeChangeDetection() {
                 if (DEBUG_MODE)
                     console.log("automaticDark DEBUG: enableSchemeChangeDetection - Mode is set to: " + mode + ". Reset theme to default.");
 
-                browser.theme.reset().then(() => {
+                return browser.theme.reset().then(() => {
                     if (DEBUG_MODE)
                         console.log("automaticDark DEBUG: enableSchemeChangeDetection - Reset current theme.");
                     detect_scheme_change_block = false;
