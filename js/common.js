@@ -201,9 +201,16 @@ function init() {
                     ]);
                 }
             }
-        }, onError)
-        .then((obj) => {
+            else {
+                // Startup-only mode queues no switch chain (which would apply
+                // the color_scheme workaround itself), so apply the workaround
+                // to whatever theme is painted now. Running this when a chain
+                // WAS queued above would strip the workaround that chain just
+                // applied: enableSchemeChangeDetection() starts with
+                // theme.reset(), which repaints the default theme
+                // (bug 1415267).
             return queueThemeSwitch(enableSchemeChangeDetection);
+            }
         }, onError);
 }
 
@@ -403,26 +410,72 @@ function enableTheme(theme, themeKey) {
             else {
                 if (DEBUG_MODE)
                     console.log("automaticDark DEBUG: 100 enableTheme - " + theme.themeId + " is already enabled.");
-                return reapplyColorSchemeFix();
+                return reapplyColorSchemeFix(theme.themeId);
             }
         }, onError);
 }
+
+// Built-in themes report no colors from theme.getCurrent(), so for them a
+// colorless paint cannot be told apart from a correct one.
+const BUILT_IN_THEME_IDS = [
+    "default-theme@mozilla.org",
+    "firefox-compact-light@mozilla.org",
+    "firefox-compact-dark@mozilla.org"
+];
+
+// If re-enabling a theme doesn't surface colors, the theme genuinely has
+// none (like the built-ins above, should their ids ever change) — remember
+// it and stop retrying, or the once-a-minute poll would toggle it into a
+// visible flicker loop.
+let repaint_attempted_theme = null;
 
 // Re-apply the color_scheme fix if the enabled theme is missing it.
 // Switching to system-theme mode while the matching theme is already
 // enabled skips enableSchemeChangeDetection(), leaving the theme without
 // color_scheme "system" — OS scheme changes then go undetected for the
 // rest of the session.
-function reapplyColorSchemeFix() {
+function reapplyColorSchemeFix(themeId) {
     return browser.storage.local.get(CHANGE_MODE_KEY)
         .then((obj) => {
             if (obj[CHANGE_MODE_KEY].mode !== "system-theme") {
                 return;
             }
             return browser.theme.getCurrent().then((current_theme) => {
-                if (current_theme.colors
-                        && (!current_theme.properties || current_theme.properties.color_scheme !== "system")) {
+                if (current_theme.colors) {
+                    // A painted theme has colors, so any earlier repaint
+                    // attempt worked; allow future repaints again.
+                    repaint_attempted_theme = null;
+                    if (!current_theme.properties || current_theme.properties.color_scheme !== "system") {
                     return enableSchemeChangeDetection();
+                }
+                    return;
+                }
+                // management can report the theme as enabled while the default
+                // theme is what is actually painted: theme.reset() always
+                // repaints the default theme (bug 1415267), and reloading the
+                // extension drops its theme.update() overlay the same way.
+                // getCurrent() then reports no colors, so the branch above
+                // never fires and the wrong paint would otherwise be permanent.
+                // Toggle the theme to force a real repaint.
+                if (themeId
+                    && !BUILT_IN_THEME_IDS.includes(themeId)
+                    && themeId !== repaint_attempted_theme) {
+                    if (DEBUG_MODE)
+                        console.log("automaticDark DEBUG: reapplyColorSchemeFix - " + themeId + " is enabled but not painted. Re-enabling it.");
+                    repaint_attempted_theme = themeId;
+                    detect_scheme_change_block = true;
+                    return browser.management.setEnabled(themeId, false)
+                        .then(() => browser.management.setEnabled(themeId, true))
+                        .then(enableSchemeChangeDetection,
+                            (err) => { detect_scheme_change_block = false; onError(err); })
+                        .then(() => browser.theme.getCurrent())
+                        .then((repainted) => {
+                            // Colors surfacing means the repaint worked; allow
+                            // another repaint if the paint is lost again later.
+                            if (repainted.colors) {
+                                repaint_attempted_theme = null;
+                            }
+                        });
                 }
             });
         });
