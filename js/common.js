@@ -202,14 +202,12 @@ function init() {
                 }
             }
             else {
-                // Startup-only mode queues no switch chain (which would apply
-                // the color_scheme workaround itself), so apply the workaround
-                // to whatever theme is painted now. Running this when a chain
-                // WAS queued above would strip the workaround that chain just
-                // applied: enableSchemeChangeDetection() starts with
-                // theme.reset(), which repaints the default theme
-                // (bug 1415267).
-            return queueThemeSwitch(enableSchemeChangeDetection);
+                // Change only on startup: this is the startup, so switch once.
+                // In system-theme mode the switch chain also applies the
+                // color_scheme workaround and re-enables a theme whose paint was
+                // lost (e.g. after an extension reload); the other modes need
+                // neither. Nothing further is needed here.
+                return queueThemeSwitch(() => changeThemeBasedOnChangeMode(obj[CHANGE_MODE_KEY].mode));
             }
         }, onError);
 }
