@@ -300,9 +300,6 @@ function alarmListener(alarmInfo) {
                 }
             }, onError);
     }
-    else if (alarmInfo.name === "checkTime") {
-        return queueThemeSwitch(checkTime);
-    }
 }
 
 // Check the current system time and set the theme based on the time.
