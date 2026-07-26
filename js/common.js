@@ -14,6 +14,7 @@ const SUNRISE_TIME_KEY = KEY_PREFIX + "sunriseTime";
 const SUNSET_TIME_KEY = KEY_PREFIX + "sunsetTime";
 const NEXT_SUNRISE_ALARM_NAME = KEY_PREFIX + "nextSunrise";
 const NEXT_SUNSET_ALARM_NAME = KEY_PREFIX + "nextSunset";
+const SYSTEM_THEME_POLL_ALARM_NAME = KEY_PREFIX + "systemThemePoll";
 
 const GEOLOCATION_LATITUDE_KEY = KEY_PREFIX + "geoLatitude";
 const GEOLOCATION_LONGITUDE_KEY = KEY_PREFIX + "geoLongitude";
@@ -33,14 +34,44 @@ let DEFAULT_NIGHTTIME_THEME = "";
 
 var detect_scheme_change_block = false; // This is just a sneaky way to prevent flashing
 
+// All theme switches are funneled through this queue so only one runs at a
+// time. The change event, the focus listener, the poll and the startup check
+// can otherwise fire near-simultaneously and interleave: the second chain's
+// theme.reset() can land after the first chain's finished switch, and
+// theme.reset() always repaints the *default* theme, not the enabled one
+// (see bug 1415267) — leaving the default theme on screen with no
+// color_scheme workaround applied and nothing left to correct it.
+let theme_switch_queue = Promise.resolve();
+
+// Run fn after every previously queued theme switch has fully finished.
+// Returns fn's own promise; the stored queue tail never stays rejected.
+function queueThemeSwitch(fn) {
+    const result = theme_switch_queue.then(fn);
+    theme_switch_queue = result.then(() => {}, onError);
+    return result;
+}
+
 let DEBUG_MODE = false;
 browser.storage.local.get(DEBUG_MODE_KEY)
     .then((obj) => {
-        DEBUG_MODE = obj[DEBUG_MODE_KEY].check;
+        // On a fresh install this read runs before init() has created
+        // the key, so guard against it being absent.
+        DEBUG_MODE = !!(obj[DEBUG_MODE_KEY] && obj[DEBUG_MODE_KEY].check);
 
         if (DEBUG_MODE)
             console.log("automaticDark DEBUG: DEBUG_MODE is enabled.");
     }, onError);
+
+// Pick up the Debug mode checkbox immediately. The read above only runs
+// once at page load, so the background page never saw later changes —
+// toggling the checkbox did nothing for its logging until the extension
+// reloaded or the browser restarted.
+browser.storage.onChanged.addListener((changes, area) => {
+    if (area === "local" && changes[DEBUG_MODE_KEY]) {
+        DEBUG_MODE = !!(changes[DEBUG_MODE_KEY].newValue && changes[DEBUG_MODE_KEY].newValue.check);
+        console.log("automaticDark DEBUG: DEBUG_MODE is now " + DEBUG_MODE + ".");
+    }
+});
 
 // Things to do when the extension is starting up
 // (or if the settings have been reset).
@@ -79,7 +110,16 @@ function init() {
         .then((obj) => {
             if (!obj[CHECK_TIME_STARTUP_ONLY_KEY].check) {
                 // On start up, change the themes appropriately.
-                changeThemeBasedOnChangeMode(obj[CHANGE_MODE_KEY].mode);
+                queueThemeSwitch(() => changeThemeBasedOnChangeMode(obj[CHANGE_MODE_KEY].mode));
+
+                // Poll the system theme on a timer as a fallback. Since Firefox 95,
+                // prefers-color-scheme in extension pages reflects the browser theme
+                // rather than the OS (Bugzilla 1741009, resolved WORKSFORME), so the
+                // matchMedia 'change' event below only fires on OS theme changes while
+                // the color_scheme "system" workaround is applied — and a change can
+                // still be missed (e.g. while the machine sleeps).
+                // See issues #43, #64, #67.
+                browser.alarms.create(SYSTEM_THEME_POLL_ALARM_NAME, {periodInMinutes: 1});
 
                 // Add a listener to change the theme when the window is focused.
 
@@ -96,13 +136,16 @@ function init() {
 
                         browser.storage.local.get(CHANGE_MODE_KEY)
                             .then((obj) => {
-                                changeThemeBasedOnChangeMode(obj[CHANGE_MODE_KEY].mode);
+                                queueThemeSwitch(() => changeThemeBasedOnChangeMode(obj[CHANGE_MODE_KEY].mode));
 
                                 if (obj[CHANGE_MODE_KEY].mode === "location-suntimes" || obj[CHANGE_MODE_KEY].mode === "manual-suntimes"){
                                     browser.alarms.clearAll();
                                     createAlarm(SUNRISE_TIME_KEY, NEXT_SUNRISE_ALARM_NAME, 60 * 24),
                                     createAlarm(SUNSET_TIME_KEY, NEXT_SUNSET_ALARM_NAME, 60 * 24)
                                 }
+
+                                // clearAll() above can wipe the poll alarm; re-establish it.
+                                browser.alarms.create(SYSTEM_THEME_POLL_ALARM_NAME, {periodInMinutes: 1});
                             });
                     }
                 });
@@ -117,7 +160,7 @@ function init() {
                         browser.storage.local.get(CHANGE_MODE_KEY)
                             .then((obj) => {
                                 if (obj[CHANGE_MODE_KEY].mode === "system-theme") {
-                                    checkSysTheme();
+                                    queueThemeSwitch(checkSysTheme);
                                 }
                         });
                     } else {
@@ -158,9 +201,14 @@ function init() {
                     ]);
                 }
             }
-        }, onError)
-        .then((obj) => {
-            enableSchemeChangeDetection();
+            else {
+                // Change only on startup: this is the startup, so switch once.
+                // In system-theme mode the switch chain also applies the
+                // color_scheme workaround and re-enables a theme whose paint was
+                // lost (e.g. after an extension reload); the other modes need
+                // neither. Nothing further is needed here.
+                return queueThemeSwitch(() => changeThemeBasedOnChangeMode(obj[CHANGE_MODE_KEY].mode));
+            }
         }, onError);
 }
 
@@ -217,59 +265,40 @@ function alarmListener(alarmInfo) {
     if (DEBUG_MODE)
         console.log("automaticDark DEBUG: Start alarmListener");
 
-    if (alarmInfo.name === NEXT_SUNRISE_ALARM_NAME) {
-        return browser.storage.local.get([CHANGE_MODE, DAYTIME_THEME_KEY])
-            .then(
-                (values) => {
-                    // If we are set to get suntimes automatically,
-                    // then calculate the sunset again upon
-                    // an alarm and create new alarms based on that.
-                    if (obj[CHANGE_MODE_KEY] = "location-suntimes") {
-                        calculateSuntimes()
-                            .then((result) => {
-                                return Promise.all([
-                                    browser.storage.local.set({[SUNRISE_TIME_KEY]: {time: convertDateToString(result.nextSunrise)}}),
-                                    browser.storage.local.set({[SUNSET_TIME_KEY]: {time: convertDateToString(result.nextSunset)}})
-                                ]);
-                            })
-                            .then(() => {
-                                return Promise.all([
-                                    createAlarm(SUNRISE_TIME_KEY, NEXT_SUNRISE_ALARM_NAME, 60 * 24),
-                                    createAlarm(SUNSET_TIME_KEY, NEXT_SUNSET_ALARM_NAME, 60 * 24)
-                                ]);
-                            });
-
-                        
-                    }
-                    enableTheme(values, DAYTIME_THEME_KEY);
+    if (alarmInfo.name === NEXT_SUNRISE_ALARM_NAME || alarmInfo.name === NEXT_SUNSET_ALARM_NAME) {
+        return browser.storage.local.get(CHANGE_MODE_KEY)
+            .then((obj) => {
+                // In automatic (location) mode, recalculate the next sunrise/sunset
+                // times upon each alarm and reschedule the alarms based on them.
+                if (obj[CHANGE_MODE_KEY].mode === "location-suntimes") {
+                    return calculateSuntimes()
+                        .then((result) => {
+                            return Promise.all([
+                                browser.storage.local.set({[SUNRISE_TIME_KEY]: {time: convertDateToString(result.nextSunrise)}}),
+                                browser.storage.local.set({[SUNSET_TIME_KEY]: {time: convertDateToString(result.nextSunset)}})
+                            ]);
+                        })
+                        .then(() => {
+                            return Promise.all([
+                                createAlarm(SUNRISE_TIME_KEY, NEXT_SUNRISE_ALARM_NAME, 60 * 24),
+                                createAlarm(SUNSET_TIME_KEY, NEXT_SUNSET_ALARM_NAME, 60 * 24)
+                            ]);
+                        });
                 }
-                , onError);
+            }, onError)
+            // checkTime() reads the (possibly just-updated) sunrise/sunset times,
+            // enables the correct day/night theme, and records the current mode.
+            .then(() => queueThemeSwitch(checkTime));
     }
-    else if (alarmInfo.name === NEXT_SUNSET_ALARM_NAME) {
-        return browser.storage.local.get([AUTOMATIC_SUNTIMES_KEY, NIGHTTIME_THEME_KEY])
-            .then(
-                (values) => {
-                    if (obj[CHANGE_MODE_KEY] = "location-suntimes") {
-                        calculateSuntimes()
-                            .then((result) => {
-                                return Promise.all([
-                                    browser.storage.local.set({[SUNRISE_TIME_KEY]: {time: convertDateToString(result.nextSunrise)}}),
-                                    browser.storage.local.set({[SUNSET_TIME_KEY]: {time: convertDateToString(result.nextSunset)}})
-                                ]);
-                            })
-                            .then(() => {
-                                return Promise.all([
-                                    createAlarm(SUNRISE_TIME_KEY, NEXT_SUNRISE_ALARM_NAME, 60 * 24),
-                                    createAlarm(SUNSET_TIME_KEY, NEXT_SUNSET_ALARM_NAME, 60 * 24)
-                                ]);
-                            });
-                    }
-                    enableTheme(values, NIGHTTIME_THEME_KEY);
+    else if (alarmInfo.name === SYSTEM_THEME_POLL_ALARM_NAME) {
+        // System-theme mode: re-check the OS theme on a timer, as a fallback
+        // for when the prefers-color-scheme 'change' event isn't delivered.
+        return browser.storage.local.get(CHANGE_MODE_KEY)
+            .then((obj) => {
+                if (obj[CHANGE_MODE_KEY].mode === "system-theme") {
+                    return queueThemeSwitch(checkSysTheme);
                 }
-                , onError);
-    }
-    else if (alarmInfo.name === "checkTime") {
-        return checkTime();
+            }, onError);
     }
 }
 
@@ -278,6 +307,19 @@ function alarmListener(alarmInfo) {
 // Otherwise, set nighttime theme.
 
 // TODO: Can split this function to be more generic. Make function enableTime happen as a parameter.
+// Record the current mode (day-mode/night-mode), writing storage only
+// when the value actually changes. The once-a-minute poll and the
+// window-focus listener land here constantly; without the guard they
+// generate a steady stream of no-op writes and onChanged events.
+function setCurrentMode(mode) {
+    return browser.storage.local.get(CURRENT_MODE_KEY)
+        .then((obj) => {
+            if (!obj[CURRENT_MODE_KEY] || obj[CURRENT_MODE_KEY].mode !== mode) {
+                return browser.storage.local.set({[CURRENT_MODE_KEY]: {mode: mode}});
+            }
+        });
+}
+
 function checkTime() {
     let date = new Date(Date.now());
     let hours = date.getHours();
@@ -301,7 +343,7 @@ function checkTime() {
                     .then((obj) => {
                         return enableTheme(obj, DAYTIME_THEME_KEY)
                             .then(() => {
-                                return browser.storage.local.set({[CURRENT_MODE_KEY]: {mode: "day-mode"}});
+                                return setCurrentMode("day-mode");
                             });
                     }, onError);
             } else {
@@ -309,7 +351,7 @@ function checkTime() {
                     .then((obj) => {
                         return enableTheme(obj, NIGHTTIME_THEME_KEY)
                             .then(() => {
-                                return browser.storage.local.set({[CURRENT_MODE_KEY]: {mode: "night-mode"}});
+                                return setCurrentMode("night-mode");
                             });
                     }, onError);
             }
@@ -327,7 +369,7 @@ function checkSysTheme() {
         return browser.storage.local.get(NIGHTTIME_THEME_KEY)
             .then((obj) => {
                 return Promise.all([
-                    browser.storage.local.set({[CURRENT_MODE_KEY]: {mode: "night-mode"}}), 
+                    setCurrentMode("night-mode"),
                     enableTheme(obj, NIGHTTIME_THEME_KEY)
                 ]);
             }, onError);
@@ -337,7 +379,7 @@ function checkSysTheme() {
         return browser.storage.local.get(DAYTIME_THEME_KEY)
             .then((obj) => {
                 return Promise.all([
-                    browser.storage.local.set({[CURRENT_MODE_KEY]: {mode: "day-mode"}}),
+                    setCurrentMode("day-mode"),
                     enableTheme(obj, DAYTIME_THEME_KEY)
                 ]);
             }, onError);
@@ -357,13 +399,81 @@ function enableTheme(theme, themeKey) {
                 if (DEBUG_MODE)
                     console.log("automaticDark DEBUG: 100 enableTheme - Enabled theme " + theme.themeId);
                 detect_scheme_change_block = true; // Temporarily disables detection of color scheme change
-                browser.management.setEnabled(theme.themeId, true).then(enableSchemeChangeDetection);
+                return browser.management.setEnabled(theme.themeId, true).then(enableSchemeChangeDetection,
+                    (err) => { detect_scheme_change_block = false; onError(err); });
             }
             else {
                 if (DEBUG_MODE)
                     console.log("automaticDark DEBUG: 100 enableTheme - " + theme.themeId + " is already enabled.");
+                return reapplyColorSchemeFix(theme.themeId);
             }
         }, onError);
+}
+
+// Built-in themes report no colors from theme.getCurrent(), so for them a
+// colorless paint cannot be told apart from a correct one.
+const BUILT_IN_THEME_IDS = [
+    "default-theme@mozilla.org",
+    "firefox-compact-light@mozilla.org",
+    "firefox-compact-dark@mozilla.org"
+];
+
+// If re-enabling a theme doesn't surface colors, the theme genuinely has
+// none (like the built-ins above, should their ids ever change) — remember
+// it and stop retrying, or the once-a-minute poll would toggle it into a
+// visible flicker loop.
+let repaint_attempted_theme = null;
+
+// Re-apply the color_scheme fix if the enabled theme is missing it.
+// Switching to system-theme mode while the matching theme is already
+// enabled skips enableSchemeChangeDetection(), leaving the theme without
+// color_scheme "system" — OS scheme changes then go undetected for the
+// rest of the session.
+function reapplyColorSchemeFix(themeId) {
+    return browser.storage.local.get(CHANGE_MODE_KEY)
+        .then((obj) => {
+            if (obj[CHANGE_MODE_KEY].mode !== "system-theme") {
+                return;
+            }
+            return browser.theme.getCurrent().then((current_theme) => {
+                if (current_theme.colors) {
+                    // A painted theme has colors, so any earlier repaint
+                    // attempt worked; allow future repaints again.
+                    repaint_attempted_theme = null;
+                    if (!current_theme.properties || current_theme.properties.color_scheme !== "system") {
+                    return enableSchemeChangeDetection();
+                }
+                    return;
+                }
+                // management can report the theme as enabled while the default
+                // theme is what is actually painted: theme.reset() always
+                // repaints the default theme (bug 1415267), and reloading the
+                // extension drops its theme.update() overlay the same way.
+                // getCurrent() then reports no colors, so the branch above
+                // never fires and the wrong paint would otherwise be permanent.
+                // Toggle the theme to force a real repaint.
+                if (themeId
+                    && !BUILT_IN_THEME_IDS.includes(themeId)
+                    && themeId !== repaint_attempted_theme) {
+                    if (DEBUG_MODE)
+                        console.log("automaticDark DEBUG: reapplyColorSchemeFix - " + themeId + " is enabled but not painted. Re-enabling it.");
+                    repaint_attempted_theme = themeId;
+                    detect_scheme_change_block = true;
+                    return browser.management.setEnabled(themeId, false)
+                        .then(() => browser.management.setEnabled(themeId, true))
+                        .then(enableSchemeChangeDetection,
+                            (err) => { detect_scheme_change_block = false; onError(err); })
+                        .then(() => browser.theme.getCurrent())
+                        .then((repainted) => {
+                            // Colors surfacing means the repaint worked; allow
+                            // another repaint if the paint is lost again later.
+                            if (repainted.colors) {
+                                repaint_attempted_theme = null;
+                            }
+                        });
+                }
+            });
+        });
 }
 
 // Modifies the color scheme of the current theme to prevent interference with detection of the OS system theme.
@@ -372,47 +482,58 @@ function enableSchemeChangeDetection() {
     if (DEBUG_MODE)
         console.log("automaticDark DEBUG: Start enableSchemeChangeDetection");
 
-    browser.storage.local.get(CHANGE_MODE_KEY)
+    return browser.storage.local.get(CHANGE_MODE_KEY)
         .then((obj) => {
             let mode = obj[CHANGE_MODE_KEY].mode;
 
-            browser.theme.getCurrent().then(current_theme => {
+            // Only modify the current theme when the extension is set to "system theme" mode.
+            if (mode === "system-theme") {
+                // Drop any dynamic theme we previously applied via theme.update()
+                // BEFORE reading getCurrent(). theme.update() creates an overlay
+                // owned by this extension that sits on top of the enabled static
+                // theme; while that overlay exists, getCurrent() returns it, not
+                // the static theme underneath.
+                // Without the reset, a stale overlay (e.g. last night's dark
+                // colors) gets re-applied over the newly enabled theme and masks
+                // it indefinitely, even though management reports the right theme.
+                return browser.theme.reset()
+                    .then(() => browser.theme.getCurrent())
+                    .then((current_theme) => {
+                        if (DEBUG_MODE)
+                            console.log(current_theme);
 
+                        if (current_theme.colors) { // "System theme — auto" is an empty object
+                            if (DEBUG_MODE)
+                                console.log("automaticDark DEBUG: enableSchemeChangeDetection - Mode is set to 'system-theme'. Set color_scheme to system.");
+
+                            // Some themes are returned without a 'properties' object.
+                            // Guard against that so we don't throw and leave the
+                            // scheme-change block stuck on (silently disabling detection).
+                            if (!current_theme.properties)
+                                current_theme.properties = {};
+                            current_theme.properties.color_scheme = "system"; // Change the property of the theme object
+                            current_theme.properties.content_color_scheme = "system"; // Optional
+
+                            return browser.theme.update(current_theme).then(() => {
+                                if (DEBUG_MODE)
+                                    console.log("automaticDark DEBUG: enableSchemeChangeDetection - Updated current theme.");
+                            });
+                        }
+                    })
+                    // Un-block scheme change detection whether or not the update applied.
+                    .then(() => { detect_scheme_change_block = false; },
+                          (err) => { detect_scheme_change_block = false; onError(err); });
+            }
+            else { //if (mode === "location-suntimes" || mode === "manual-suntimes"){
                 if (DEBUG_MODE)
-                    console.log(current_theme);
+                    console.log("automaticDark DEBUG: enableSchemeChangeDetection - Mode is set to: " + mode + ". Reset theme to default.");
 
-                if (current_theme.colors) { // "System theme — auto" is an empty object
-
-                    // Only modify the current theme when the extension is set to "system theme" mode.
-                    if (mode === "system-theme") {
-                        if (DEBUG_MODE)
-                            console.log("automaticDark DEBUG: enableSchemeChangeDetection - Mode is set to 'system-theme'. Set color_scheme to system.");
-
-                        current_theme.properties.color_scheme = "system"; // Change the property of the theme object
-                        current_theme.properties.content_color_scheme = "system"; // Optional
-
-                        browser.theme.update(current_theme).then(() => {
-                            if (DEBUG_MODE)
-                                console.log("automaticDark DEBUG: enableSchemeChangeDetection - Updated current theme.");
-                            detect_scheme_change_block = false;
-                        }); // Applies amended theme and un-block scheme change detection
-
-                    }
-                    else { //if (mode === "location-suntimes" || mode === "manual-suntimes"){
-                        if (DEBUG_MODE)
-                            console.log("automaticDark DEBUG: enableSchemeChangeDetection - Mode is set to: " + mode + ". Reset theme to default.");
-
-                        browser.theme.reset().then(() => {
-                            if (DEBUG_MODE)
-                                console.log("automaticDark DEBUG: enableSchemeChangeDetection - Reset current theme.");
-                            detect_scheme_change_block = false;
-                        });
-                    }
-
-                } else {
+                return browser.theme.reset().then(() => {
+                    if (DEBUG_MODE)
+                        console.log("automaticDark DEBUG: enableSchemeChangeDetection - Reset current theme.");
                     detect_scheme_change_block = false;
-                }
-            });
+                });
+            }
         });
 }
 

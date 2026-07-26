@@ -50,33 +50,21 @@ function addLeadZero (num){
 }
 
 // Helper:
-// Set storage only if overrideDefault is true or
-// the managed storage is empty.
+// Set each key in storage only if overrideDefault is true or
+// that key has never been set before.
 function setStorage(obj, overrideDefault = false) {
     if (DEBUG_MODE)
         console.log("automaticDark DEBUG: Start setStorage");
 
-    for (let item in obj) {
-        browser.storage.local.get(item)
+    return Promise.all(Object.keys(obj).map((item) => {
+        return browser.storage.local.get(item)
             .then((fetchedItem) => {
                 if (overrideDefault || isEmpty(fetchedItem)) {
-                    return browser.storage.local.set(obj)
-                        .then((obj) => {}, onError);
-                    }
+                    return browser.storage.local.set({[item]: obj[item]})
+                        .then(() => {}, onError);
+                }
             }, onError);
-    }
-
-    return browser.storage.local.get(Object.keys(obj))
-        .then((items) => {
-            // Only set storage if a value is not already set,
-            // or if it is already empty.
-            if (overrideDefault || isEmpty(items)) {
-                return browser.storage.local.set(obj)
-                    .then((obj) => {
-                        console.log(obj);
-                    }, onError);
-            }
-        }, onError);
+    }));
 }
 
 // Helper: Get all active alarms.

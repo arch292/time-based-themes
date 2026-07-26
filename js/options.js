@@ -249,7 +249,7 @@ automaticSuntimesRadio.addEventListener("input", function(event) {
                     onError(error);
                     locationWarning.style.display = "inline";
                     getChangeMode(); // In error, change radio buttons (and settings) back to the way they were, based on storage.
-                    changeThemeBasedOnChangeMode("location-theme");
+                    queueThemeSwitch(() => changeThemeBasedOnChangeMode("location-theme"));
                 });
     }
 });
@@ -259,7 +259,7 @@ manualSuntimesRadio.addEventListener("input", function(event) {
         browser.storage.local.set({[CHANGE_MODE_KEY]: {mode: "manual-suntimes"}});
         sunriseInput.disabled = false;
         sunsetInput.disabled = false;
-        changeThemeBasedOnChangeMode("manual-suntimes").then(changeLogo);
+        queueThemeSwitch(() => changeThemeBasedOnChangeMode("manual-suntimes")).then(changeLogo);
     }
 });
 
@@ -274,11 +274,12 @@ sysThemeRadio.addEventListener("input", function(event) {
         browser.storage.local.set({[CHANGE_MODE_KEY]: {mode: "system-theme"}});
         sunriseInput.disabled = true;
         sunsetInput.disabled = true;
-        changeThemeBasedOnChangeMode("system-theme").then(changeLogo);
+        queueThemeSwitch(() => changeThemeBasedOnChangeMode("system-theme")).then(changeLogo);
     }
 });
 
-// Enable/disable the check on startup-only flag.
+// Save the startup-only flag and stop or resume scheduled theme
+// switching to match.
 checkStartupBox.addEventListener("input", function(event) {
     if (checkStartupBox.checked) {
         browser.storage.local.set({[CHECK_TIME_STARTUP_ONLY_KEY]: {check: true}});
@@ -295,6 +296,17 @@ checkStartupBox.addEventListener("input", function(event) {
         browser.storage.local.set({[CHECK_TIME_STARTUP_ONLY_KEY]: {check: false}});
         createAlarm(SUNRISE_TIME_KEY, NEXT_SUNRISE_ALARM_NAME, 60 * 24);
         createAlarm(SUNSET_TIME_KEY, NEXT_SUNSET_ALARM_NAME, 60 * 24);
+        // If the background page started with this flag on, it skipped
+        // registering its scheme-change listeners, and this page cannot
+        // register them for it. Its alarm listener IS registered, so the
+        // poll alarm restores theme switching without a restart.
+        browser.alarms.create(SYSTEM_THEME_POLL_ALARM_NAME, {periodInMinutes: 1});
+        // Switch right away in case the correct theme changed while
+        // switching was off.
+        browser.storage.local.get(CHANGE_MODE_KEY)
+            .then((obj) => {
+                queueThemeSwitch(() => changeThemeBasedOnChangeMode(obj[CHANGE_MODE_KEY].mode));
+            }, onError);
         startupOnlyMessage.style.display = "none";
     }
 });
@@ -314,7 +326,7 @@ debugModeBox.addEventListener("input", function(event) {
 sunriseInput.addEventListener("input", function(event) {
     browser.storage.local.set({[SUNRISE_TIME_KEY]: {time: sunriseInput.value}})
         .then(() => {
-            checkTime().then(changeLogo);
+            queueThemeSwitch(checkTime).then(changeLogo);
             return browser.storage.local.get(CHECK_TIME_STARTUP_ONLY_KEY)
         }, onError)
         .then((obj) => {
@@ -329,7 +341,7 @@ sunriseInput.addEventListener("input", function(event) {
 sunsetInput.addEventListener("input", function(event) {
     browser.storage.local.set({[SUNSET_TIME_KEY]: {time: sunsetInput.value}})
         .then(() => {
-            checkTime().then(changeLogo);
+            queueThemeSwitch(checkTime).then(changeLogo);
             return browser.storage.local.get(CHECK_TIME_STARTUP_ONLY_KEY);
         }, onError)
         .then((obj) => {
@@ -347,7 +359,7 @@ daytimeThemeList.addEventListener('change', function(event) {
             return browser.storage.local.get([CHECK_TIME_STARTUP_ONLY_KEY, CHANGE_MODE_KEY]);
         }, onError)
         .then((obj) => {
-            changeThemeBasedOnChangeMode(obj[CHANGE_MODE_KEY].mode);
+            queueThemeSwitch(() => changeThemeBasedOnChangeMode(obj[CHANGE_MODE_KEY].mode));
         }, onError);
     }
 );
@@ -360,7 +372,7 @@ nighttimeThemeList.addEventListener('change', function(event) {
             return browser.storage.local.get([CHECK_TIME_STARTUP_ONLY_KEY, CHANGE_MODE_KEY]);
         }, onError)
         .then((obj) => {
-            changeThemeBasedOnChangeMode(obj[CHANGE_MODE_KEY].mode);
+            queueThemeSwitch(() => changeThemeBasedOnChangeMode(obj[CHANGE_MODE_KEY].mode));
         }, onError);
     }
 );
