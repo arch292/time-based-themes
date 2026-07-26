@@ -21,15 +21,11 @@ let sunsetInputEvent = new Event("input");
 
 let currentlyEnabledTheme;
 
-if (DEBUG_MODE)
-    console.log("automaticDark DEBUG: DEBUG_MODE is enabled.");
-
-
 // Log everything stored.
 browser.storage.local.get(null)
     .then((results) => {
+        logDebug("Options page - Options page opened. All stored data...");
         if (DEBUG_MODE) {
-            console.log("automaticDark DEBUG: Options page opened. All stored data:");
             console.log(results);
         }
     }, onError);
@@ -43,10 +39,10 @@ getChangeMode();
 browser.storage.onChanged.addListener((changes, area) => {
     let changedItems = Object.keys(changes);
 
-    if (DEBUG_MODE)
-        console.log("automaticDark DEBUG: Browser storage changed. Change logo on Options page.");
+    logDebug("Options page - Browser storage changed. Iterate through items changed.");
 
     for (let item of changedItems) {
+        logDebug("Options page - Checking changed item: " + item + ". Its value is " + changes[item].newValue);
 
         // If the extension's current mode changes (eg. from daytime to nighttime),
         // then adjust the change and option page theme accordingly.
@@ -60,16 +56,19 @@ browser.storage.onChanged.addListener((changes, area) => {
 
 // Iterate through each extension to populate the dropdowns.
 browser.management.getAll().then((extensions) => {
-
-    if (DEBUG_MODE)
+    if (DEBUG_MODE) {
+        logDebug("Options page - All extensions...");
         console.log(extensions);
+    }
 
     for (let extension of extensions) {
         // Add each theme as an option in the dropdowns.
         if (extension.type === 'theme') {
 
-            if (DEBUG_MODE)
+            if (DEBUG_MODE) {
+                logDebug("Options page - Theme extension...");
                 console.log(extension);
+            }
 
             let extOption = document.createElement('option');
             extOption.textContent = extension.name;
@@ -81,8 +80,10 @@ browser.management.getAll().then((extensions) => {
             // Take note of the currently enabled theme.
             if (extension.enabled === true) {
                 currentlyEnabledTheme = extension;
-                if (DEBUG_MODE)
+                if (DEBUG_MODE) {
+                    logDebug("Options page - currentlyEnabledTheme:");
                     console.log(currentlyEnabledTheme);
+                }
             }
         }
     }
@@ -97,12 +98,10 @@ browser.management.getAll().then((extensions) => {
             }
 
             if (currentlyEnabledTheme.id === theme.themeId) {
-                if (DEBUG_MODE)
-                    console.log("Day time theme is the currentlyEnabledTheme.");
+                logDebug("Options page - Day time theme is the currentlyEnabledTheme.");
             }
             else {
-                if (DEBUG_MODE)
-                    console.log("Day time theme is not the currentlyEnabledTheme.");
+                logDebug("Options page - Day time theme is not the currentlyEnabledTheme.");
             }
         }, onError);
 
@@ -116,27 +115,23 @@ browser.management.getAll().then((extensions) => {
             }
 
             if (currentlyEnabledTheme.id === theme.themeId) {
-                if (DEBUG_MODE)
-                    console.log("Night time theme is the currentlyEnabledTheme.");
+                logDebug("Options page - Night time theme is the currentlyEnabledTheme.");
             }
             else {
-                if (DEBUG_MODE)
-                    console.log("Night time theme is not the currentlyEnabledTheme.");
+                logDebug("Options page - Night time theme is not the currentlyEnabledTheme.");
             }
         }, onError);
 });
 
 // Change the logo on the options page based on the current mode.
 function changeLogo() {
-    if (DEBUG_MODE)
-        console.log("automaticDark DEBUG: Start changeLogo");
+    logDebug("Options page - Start changeLogo");
 
     browser.storage.local.get(CURRENT_MODE_KEY)
         .then((currentMode) => {
             currentMode = currentMode[CURRENT_MODE_KEY].mode;
 
-            if (DEBUG_MODE)
-                console.log("automaticDark DEBUG: Changing logo to: " + currentMode);
+            logDebug("Options page - Changing logo to: " + currentMode);
 
             if (currentMode === "day-mode") {
                 document.querySelector(".logo.day-mode").style.display = "inline-block";
@@ -156,15 +151,13 @@ function changeLogo() {
 
 // Change the logo on the options page based on the current mode.
 function changeOptionsPageTheme() {
-    if (DEBUG_MODE)
-        console.log("automaticDark DEBUG: Start changeOptionsPageTheme");
+    logDebug("Options page - Start changeOptionsPageTheme");
     /*
     browser.storage.local.get(CURRENT_MODE_KEY)
         .then((currentMode) => {
             currentMode = currentMode[CURRENT_MODE_KEY].mode;
 
-            if (DEBUG_MODE)
-                console.log("automaticDark DEBUG: Changing options page theme to: " + currentMode);
+            logDebug("Options page - Changing options page theme to: " + currentMode);
 
             if (currentMode === "day-mode") {
                 document.getElementsByTagName("body")[0].className = "day";
@@ -179,8 +172,7 @@ function changeOptionsPageTheme() {
 
 // Set the settings on the page based on what mode is set in storage.
 function getChangeMode() {
-    if (DEBUG_MODE)
-        console.log("automaticDark DEBUG: Start getChangeMode");
+    logDebug("Options page - Start getChangeMode");
 
     return browser.storage.local.get(CHANGE_MODE_KEY)
         .then((obj) => {
@@ -316,7 +308,7 @@ debugModeBox.addEventListener("input", function(event) {
     DEBUG_MODE = debugModeBox.checked;
     browser.storage.local.set({[DEBUG_MODE_KEY]: {check: debugModeBox.checked}})
         .then(() => {
-            console.log("automaticDark DEBUG_MODE has been set to: " + DEBUG_MODE);
+            logDebug("Options page - DEBUG_MODE has been set to: " + DEBUG_MODE);
         }, onError);
 });
 

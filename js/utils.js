@@ -1,3 +1,15 @@
+// Helper: Log debug messages.
+function logDebug(text) {
+    if (DEBUG_MODE) {
+        console.log("automaticDark DEBUGGING: " + text);
+    }
+}
+
+// Helper: Print the error.
+function onError(error) {
+    console.log("automaticDark Error: " + error);
+}
+
 // Helper: Figure out if a time is in-between two times.
 // Return true if it is daytime.
 // Return false if it is nighttime.
@@ -6,8 +18,7 @@ function timeInBetween(
         sunriseHours, sunriseMins, 
         sunsetHours, sunsetMins
     ){
-    if (DEBUG_MODE)
-        console.log("automaticDark DEBUG: Start timeInBetween");
+    logDebug("Start timeInBetween");
 
     let curTimeInMins = curHours * 60 + parseInt(curMins);
     let sunriseInMins = sunriseHours * 60 + parseInt(sunriseMins);
@@ -20,26 +31,22 @@ function timeInBetween(
         difference += 1440;
         if (sunriseInMins <= curTimeInMins || curTimeInMins < sunsetInMins) {
             // So, we need to do the comparisons a little differently.
-            if (DEBUG_MODE)
-                console.log("automaticDark DEBUG: It is currently daytime");
+            logDebug("timeInBetween determined it is currently daytime (" + curHours + ":" + curMins + ") because sunrise is " + sunriseHours + ":" + sunriseMins + " and sunset is " + sunsetHours + ":" + sunsetMins + ".");
             return true;
         }
     }
     else {
         if (sunriseInMins <= curTimeInMins && curTimeInMins < sunsetInMins) {
-            if (DEBUG_MODE)
-                console.log("automaticDark DEBUG: It is currently daytime");
+            logDebug("timeInBetween determined it is currently daytime.");
             return true;
         }
 }
-    if (DEBUG_MODE)
-        console.log("automaticDark DEBUG: It is currently nighttime");
+    logDebug("timeInBetween determined it is currently nighttime.");
     return false;
 }
 
 function addLeadZero (num){
-    if (DEBUG_MODE)
-        console.log("automaticDark DEBUG: Start addLeadZero");
+    logDebug("Start addLeadZero");
 
     if (num < 10) {
         return "0" + num;
@@ -53,8 +60,7 @@ function addLeadZero (num){
 // Set each key in storage only if overrideDefault is true or
 // that key has never been set before.
 function setStorage(obj, overrideDefault = false) {
-    if (DEBUG_MODE)
-        console.log("automaticDark DEBUG: Start setStorage");
+    logDebug("Start setStorage");
 
     return Promise.all(Object.keys(obj).map((item) => {
         return browser.storage.local.get(item)
@@ -69,21 +75,15 @@ function setStorage(obj, overrideDefault = false) {
 
 // Helper: Get all active alarms.
 function logAllAlarms() {
-    if (DEBUG_MODE)
-        console.log("automaticDark DEBUG: Start logAllAlarms");
+    logDebug("Start logAllAlarms");
 
     return browser.alarms.getAll()
         .then(function(alarms) {
+            logDebug("Log all active alarms...");
             if (DEBUG_MODE) {
-                console.log("automaticDark DEBUG: All active alarms: ");
                 console.log(alarms);
             }
         });
-}
-
-// Helper: Print the error.
-function onError(error) {
-    console.log("automaticDark Error: " + error);
 }
 
 // Helper: Check if the object is empty.
@@ -120,3 +120,4 @@ function convertDateToString(date) {
     let minutes = date.getMinutes();
     return addLeadZero(hours) + ":" + addLeadZero(minutes);
 }
+
