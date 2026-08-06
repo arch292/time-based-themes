@@ -374,25 +374,53 @@ function checkSysTheme() {
     }
 }
 
+// The built-in Light/Dark themes declare a color scheme which overrides the
+// browser's OS light/dark signal — once one is enabled the OS can no longer
+// be sensed and switching stops. In system-theme mode, the "System theme — auto" theme
+// paints the same under the OS side the slot is enabled for (identically on
+// Mac/Windows; on Linux it follows the system/GTK colors) and leaves the signal alone,
+// so enable it in their place. Skip when the same theme fills both slots
+// (the user wants that scheme permanently) or when the theme opposes its slot
+// (e.g. built-in Dark as the daytime theme) — auto would visibly repaint those.
+function substituteBuiltInTheme(themeId, themeKey) {
+    let aligned =
+        (themeKey === DAYTIME_THEME_KEY && themeId === "firefox-compact-light@mozilla.org")
+        || (themeKey === NIGHTTIME_THEME_KEY && themeId === "firefox-compact-dark@mozilla.org");
+    if (!aligned) {
+        return Promise.resolve(themeId);
+    }
+    return browser.storage.local.get([CHANGE_MODE_KEY, DAYTIME_THEME_KEY, NIGHTTIME_THEME_KEY])
+        .then((obj) => {
+            if (obj[CHANGE_MODE_KEY].mode === "system-theme"
+                && obj[DAYTIME_THEME_KEY] && obj[NIGHTTIME_THEME_KEY]
+                && obj[DAYTIME_THEME_KEY].themeId !== obj[NIGHTTIME_THEME_KEY].themeId) {
+                logDebug("substituteBuiltInTheme - " + themeId + " pins the OS scheme. Enabling System theme (auto) instead.");
+                return "default-theme@mozilla.org";
+            }
+            return themeId;
+        });
+}
+
 // Parse the object given and enable the theme.if it is not
 // already enabled.
 function enableTheme(theme, themeKey) {
     logDebug("Start enableTheme");
 
     theme = theme[themeKey];
-    return browser.management.get(theme.themeId)
-        .then((extInfo) => {
-            if (!extInfo.enabled) {
-                logDebug("100 enableTheme - Enabled theme " + theme.themeId);
-                detect_scheme_change_block = true; // Temporarily disables detection of color scheme change
-                return browser.management.setEnabled(theme.themeId, true).then(enableSchemeChangeDetection,
-                    (err) => { detect_scheme_change_block = false; onError(err); });
-            }
-            else {
-                logDebug("100 enableTheme - " + theme.themeId + " is already enabled.");
-                return reapplyColorSchemeFix(theme.themeId);
-            }
-        }, onError);
+    return substituteBuiltInTheme(theme.themeId, themeKey)
+        .then((themeId) => browser.management.get(themeId)
+            .then((extInfo) => {
+                if (!extInfo.enabled) {
+                    logDebug("100 enableTheme - Enabled theme " + themeId);
+                    detect_scheme_change_block = true; // Temporarily disables detection of color scheme change
+                    return browser.management.setEnabled(themeId, true).then(enableSchemeChangeDetection,
+                        (err) => { detect_scheme_change_block = false; onError(err); });
+                }
+                else {
+                    logDebug("100 enableTheme - " + themeId + " is already enabled.");
+                    return reapplyColorSchemeFix(themeId);
+                }
+            }, onError));
 }
 
 // Built-in themes report no colors from theme.getCurrent(), so for them a
@@ -426,8 +454,8 @@ function reapplyColorSchemeFix(themeId) {
                     // attempt worked; allow future repaints again.
                     repaint_attempted_theme = null;
                     if (!current_theme.properties || current_theme.properties.color_scheme !== "system") {
-                    return enableSchemeChangeDetection();
-                }
+                        return enableSchemeChangeDetection();
+                    }
                     return;
                 }
                 // management can report the theme as enabled while the default
